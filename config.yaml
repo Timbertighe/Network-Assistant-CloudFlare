@@ -1,0 +1,10 @@
+---
+# Note: indendentation is important
+# Verify formatting here: https://yaml-online-parser.appspot.com/
+
+# Cloudflare plugin configuration
+config:
+  webhook_secret: 'password'
+  auth_header: 'cf-webhook-auth'
+  chat_id: '19:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@thread.v2'
+  sql_table: 'cf-table'  
