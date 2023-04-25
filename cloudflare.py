@@ -6,7 +6,7 @@ Confirms webhook authenticity
 Sends alerts on Teams when required
 
 Modules:
-    3rd Party: termcolor, dateutil, tzlocal, pytz, datetime
+    3rd Party: termcolor, dateutil, tzlocal, pytz, datetime, re
     Custom: teamschat, plugin
 
 Classes:
@@ -29,7 +29,7 @@ Misc Variables:
         The location of the config file
 
 Limitations/Requirements:
-    No SQL logging at this time
+    IPv6 addresses aren't supported to log to SQL
 
 Author:
     Luke Robertson - April 2023
@@ -41,6 +41,7 @@ from dateutil.parser import parse
 from tzlocal import get_localzone
 from pytz import timezone
 from datetime import datetime
+import re
 
 from core import teamschat
 from core import plugin
@@ -128,27 +129,22 @@ class CloudFlareHandler(plugin.PluginTemplate):
         # Reformat the timestamp to make it nicer
         # This field varies depending on the webhook
         if 'timestamp' in json['data']:
-            timestamp = parse(json['data']['timestamp'])
-            timestamp = timestamp.astimezone(timezone(str(get_localzone())))
-            timestamp = timestamp.strftime("%H:%M:%S")
+            timestamp = json['data']['timestamp']
 
         elif 'time' in json['data']:
-            print(termcolor.colored(
-                f"CloudFlare raw timestamp: {json['data']['time']}",
-                "cyan"
-            ))
-
-            timestamp = parse(json['data']['time'])
-            timestamp = timestamp.astimezone(timezone(str(get_localzone())))
-            timestamp = timestamp.strftime("%H:%M:%S")
+            timestamp = json['data']['time']
 
         elif 'time' in json:
-            timestamp = parse(json['time'])
-            timestamp = timestamp.astimezone(timezone(str(get_localzone())))
-            timestamp = timestamp.strftime("%H:%M:%S")
+            timestamp = json['time']
 
         else:
             timestamp = 'no timestamp'
+            return timestamp
+
+        timestamp = timestamp.replace(" UTC", "")
+        timestamp = parse(timestamp)
+        timestamp = timestamp.astimezone(timezone(str(get_localzone())))
+        timestamp = timestamp.strftime("%H:%M:%S")
 
         return timestamp
 
@@ -185,7 +181,10 @@ class CloudFlareHandler(plugin.PluginTemplate):
         # Add more fields if they are available
         #   Not all webhooks have all fields
         #   Some webhooks use different field names
-        if 'pool' in json:
+        if 'alert_name' in json:
+            fields['type'] = json['alert_name']
+
+        if 'pool_name' in json:
             fields['pool'] = json['pool_name']
 
         if 'origin_name' in json:
@@ -236,13 +235,20 @@ class CloudFlareHandler(plugin.PluginTemplate):
         # Reformat the timestamp to make it nicer
         timestamp = self.timestamp(raw_response)
 
+        # Reformat the source to remove IPv6 addresses
+        #   Note this works on full IPv6 addresses
+        #   Not tested on abbreviated addresses
+        ipv6_pattern = r'([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}'
+        ipv6_addresses = re.findall(ipv6_pattern, src)
+        for ipv6 in ipv6_addresses:
+            src = src.replace(ipv6, '')
+
         # Extract fields from the webhook
         fields = self.fields(alert)
 
         try:
             # Add a few fields of our own
-            fields['type'] = raw_response['alert_type'],
-            fields['time'] = timestamp,
+            fields['time'] = timestamp
             fields['src_ip'] = src
 
         # If there's a problem extracting fields
@@ -250,11 +256,25 @@ class CloudFlareHandler(plugin.PluginTemplate):
             fields['text'] = alert
             message = f"Cloudflare event: {fields['text']}"
 
+            print(termcolor.colored(
+                f"Unrecognized Cloudflare format:\n{raw_response}",
+                "cyan"
+            ))
+
         # Build a message for Teams
         else:
-            message = f"<b><span style=\"color:Yellow\">{fields['type']} \
-                </span></b> on <b><span style=\"color:Orange\"> \
-                {fields['pool']} </span></b> at {fields['time']}"
+            message = (f'<b><span style=\"color:Yellow\">{fields["type"]}'
+                       '</span></b> on <b><span style=\"color:Orange\">"'
+                       f'{fields["pool"]} </span></b> at {fields["time"]}')
+
+            print(termcolor.colored(
+                f"CloudFlare fields:\n{fields}",
+                "cyan"
+            ))
+            print(termcolor.colored(
+                f"Raw webhook:\n{raw_response}",
+                "cyan"
+            ))
 
         # Send the main message
         self.log(message=message, event=fields)
