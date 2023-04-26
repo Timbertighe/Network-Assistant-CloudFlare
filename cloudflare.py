@@ -41,7 +41,6 @@ from dateutil.parser import parse
 from tzlocal import get_localzone
 from pytz import timezone
 from datetime import datetime
-import re
 
 from core import teamschat
 from core import plugin
@@ -235,13 +234,9 @@ class CloudFlareHandler(plugin.PluginTemplate):
         # Reformat the timestamp to make it nicer
         timestamp = self.timestamp(raw_response)
 
-        # Reformat the source to remove IPv6 addresses
-        #   Note this works on full IPv6 addresses
-        #   Not tested on abbreviated addresses
-        ipv6_pattern = r'([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}'
-        ipv6_addresses = re.findall(ipv6_pattern, src)
-        for ipv6 in ipv6_addresses:
-            src = src.replace(ipv6, '')
+        # Reformat the source to separate IP addresses
+        #   Some have two IPs, one IPv6 and one IPv4
+        src = src.split()
 
         # Extract fields from the webhook
         fields = self.fields(alert)
