@@ -1,8 +1,9 @@
 # CloudFlare Plugin Changelog
-## Issue #1 (April 2023)
+## Issue #1 (April-May 2023)
     Can't write two IP addresses to SQL (one is IPv6, the other is IPv4)
     Workaround is to strip out the IPv6 address before writing
     Also fixed a bug with timestamps, and extracting fields from webhooks
+    Fixed, 19/05/2023
     
 
 ## 0.10
