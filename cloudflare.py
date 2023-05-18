@@ -182,9 +182,13 @@ class CloudFlareHandler(plugin.PluginTemplate):
         #   Some webhooks use different field names
         if 'alert_name' in json:
             fields['type'] = json['alert_name']
+        elif 'reason' in json:
+            fields['type'] = json['reason']
 
         if 'pool_name' in json:
             fields['pool'] = json['pool_name']
+        elif 'name' in json:
+            fields['pool'] = json['name']
 
         if 'origin_name' in json:
             fields['service'] = json['origin_name']
@@ -236,7 +240,7 @@ class CloudFlareHandler(plugin.PluginTemplate):
 
         # Reformat the source to separate IP addresses
         #   Some have two IPs, one IPv6 and one IPv4
-        src = src.split()
+        src = src.split(",")
 
         # Extract fields from the webhook
         fields = self.fields(alert)
@@ -259,7 +263,7 @@ class CloudFlareHandler(plugin.PluginTemplate):
         # Build a message for Teams
         else:
             message = (f'<b><span style=\"color:Yellow\">{fields["type"]}'
-                       '</span></b> on <b><span style=\"color:Orange\">"'
+                       '</span></b> on <b><span style=\"color:Orange\">'
                        f'{fields["pool"]} </span></b> at {fields["time"]}')
 
             print(termcolor.colored(
@@ -276,6 +280,9 @@ class CloudFlareHandler(plugin.PluginTemplate):
 
         # Create the health message, if there is anything to share
         if fields['health'] != '':
+            if fields['service'] == '':
+                fields['service'] = fields['pool']
+
             if fields['health'] == 'Healthy':
                 health = \
                     f"Current status for \
@@ -376,16 +383,36 @@ class CloudFlareHandler(plugin.PluginTemplate):
         # Collect the fields to write to SQL
         date = datetime.now().date()
         time = datetime.now().time().strftime("%H:%M:%S")
+
+        if event['type'] == '':
+            event_type = 'Unknown'
+        else:
+            event_type = event['type']
+
+        if event['pool'] == '':
+            pool = 'Unknown'
+        else:
+            pool = event['pool']
+
+        if event['service'] == '':
+            event_service = 'Unknown'
+        else:
+            event_service = event['service']
+
+        source = ''
+        for item in event['src_ip']:
+            source += item
+
         fields = {
-            'type': event['type'],
-            'pool': event['pool'],
-            'service': event['service'],
-            'health': event['health'],
-            'reason': event['reason'],
-            'logdate': date,
-            'logtime': time,
-            'source': event['src_ip'],
-            'message': chat_id
+            'type': f"\'{event_type}\'",
+            'pool': f"\'{pool}\'",
+            'service': f"\'{event_service}\'",
+            'health': f"\'{event['health']}\'",
+            'reason': f"\'{event['reason']}\'",
+            'logdate': f"\'{date}\'",
+            'logtime': f"\'{time}\'",
+            'source': f"\'{source}\'",
+            'message': f"\'{chat_id}\'"
         }
 
         # Write to SQL
