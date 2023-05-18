@@ -6,7 +6,7 @@ Confirms webhook authenticity
 Sends alerts on Teams when required
 
 Modules:
-    3rd Party: termcolor, dateutil, tzlocal, pytz, datetime
+    3rd Party: termcolor, dateutil, tzlocal, pytz, datetime, re
     Custom: teamschat, plugin
 
 Classes:
@@ -29,7 +29,7 @@ Misc Variables:
         The location of the config file
 
 Limitations/Requirements:
-    No SQL logging at this time
+    IPv6 addresses aren't supported to log to SQL
 
 Author:
     Luke Robertson - April 2023
@@ -128,27 +128,22 @@ class CloudFlareHandler(plugin.PluginTemplate):
         # Reformat the timestamp to make it nicer
         # This field varies depending on the webhook
         if 'timestamp' in json['data']:
-            timestamp = parse(json['data']['timestamp'])
-            timestamp = timestamp.astimezone(timezone(str(get_localzone())))
-            timestamp = timestamp.strftime("%H:%M:%S")
+            timestamp = json['data']['timestamp']
 
         elif 'time' in json['data']:
-            print(termcolor.colored(
-                f"CloudFlare raw timestamp: {json['data']['time']}",
-                "cyan"
-            ))
-
-            timestamp = parse(json['data']['time'])
-            timestamp = timestamp.astimezone(timezone(str(get_localzone())))
-            timestamp = timestamp.strftime("%H:%M:%S")
+            timestamp = json['data']['time']
 
         elif 'time' in json:
-            timestamp = parse(json['time'])
-            timestamp = timestamp.astimezone(timezone(str(get_localzone())))
-            timestamp = timestamp.strftime("%H:%M:%S")
+            timestamp = json['time']
 
         else:
             timestamp = 'no timestamp'
+            return timestamp
+
+        timestamp = timestamp.replace(" UTC", "")
+        timestamp = parse(timestamp)
+        timestamp = timestamp.astimezone(timezone(str(get_localzone())))
+        timestamp = timestamp.strftime("%H:%M:%S")
 
         return timestamp
 
@@ -185,8 +180,15 @@ class CloudFlareHandler(plugin.PluginTemplate):
         # Add more fields if they are available
         #   Not all webhooks have all fields
         #   Some webhooks use different field names
-        if 'pool' in json:
+        if 'alert_name' in json:
+            fields['type'] = json['alert_name']
+        elif 'reason' in json:
+            fields['type'] = json['reason']
+
+        if 'pool_name' in json:
             fields['pool'] = json['pool_name']
+        elif 'name' in json:
+            fields['pool'] = json['name']
 
         if 'origin_name' in json:
             fields['service'] = json['origin_name']
@@ -236,13 +238,16 @@ class CloudFlareHandler(plugin.PluginTemplate):
         # Reformat the timestamp to make it nicer
         timestamp = self.timestamp(raw_response)
 
+        # Reformat the source to separate IP addresses
+        #   Some have two IPs, one IPv6 and one IPv4
+        src = src.split(",")
+
         # Extract fields from the webhook
         fields = self.fields(alert)
 
         try:
             # Add a few fields of our own
-            fields['type'] = raw_response['alert_type'],
-            fields['time'] = timestamp,
+            fields['time'] = timestamp
             fields['src_ip'] = src
 
         # If there's a problem extracting fields
@@ -250,17 +255,34 @@ class CloudFlareHandler(plugin.PluginTemplate):
             fields['text'] = alert
             message = f"Cloudflare event: {fields['text']}"
 
+            print(termcolor.colored(
+                f"Unrecognized Cloudflare format:\n{raw_response}",
+                "cyan"
+            ))
+
         # Build a message for Teams
         else:
-            message = f"<b><span style=\"color:Yellow\">{fields['type']} \
-                </span></b> on <b><span style=\"color:Orange\"> \
-                {fields['pool']} </span></b> at {fields['time']}"
+            message = (f'<b><span style=\"color:Yellow\">{fields["type"]}'
+                       '</span></b> on <b><span style=\"color:Orange\">'
+                       f'{fields["pool"]} </span></b> at {fields["time"]}')
+
+            print(termcolor.colored(
+                f"CloudFlare fields:\n{fields}",
+                "cyan"
+            ))
+            print(termcolor.colored(
+                f"Raw webhook:\n{raw_response}",
+                "cyan"
+            ))
 
         # Send the main message
         self.log(message=message, event=fields)
 
         # Create the health message, if there is anything to share
         if fields['health'] != '':
+            if fields['service'] == '':
+                fields['service'] = fields['pool']
+
             if fields['health'] == 'Healthy':
                 health = \
                     f"Current status for \
@@ -361,16 +383,36 @@ class CloudFlareHandler(plugin.PluginTemplate):
         # Collect the fields to write to SQL
         date = datetime.now().date()
         time = datetime.now().time().strftime("%H:%M:%S")
+
+        if event['type'] == '':
+            event_type = 'Unknown'
+        else:
+            event_type = event['type']
+
+        if event['pool'] == '':
+            pool = 'Unknown'
+        else:
+            pool = event['pool']
+
+        if event['service'] == '':
+            event_service = 'Unknown'
+        else:
+            event_service = event['service']
+
+        source = ''
+        for item in event['src_ip']:
+            source += item
+
         fields = {
-            'type': event['type'],
-            'pool': event['pool'],
-            'service': event['service'],
-            'health': event['health'],
-            'reason': event['reason'],
-            'logdate': date,
-            'logtime': time,
-            'source': event['src_ip'],
-            'message': chat_id
+            'type': f"\'{event_type}\'",
+            'pool': f"\'{pool}\'",
+            'service': f"\'{event_service}\'",
+            'health': f"\'{event['health']}\'",
+            'reason': f"\'{event['reason']}\'",
+            'logdate': f"\'{date}\'",
+            'logtime': f"\'{time}\'",
+            'source': f"\'{source}\'",
+            'message': f"\'{chat_id}\'"
         }
 
         # Write to SQL

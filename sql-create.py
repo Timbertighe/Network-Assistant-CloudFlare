@@ -263,7 +263,8 @@ if __name__ == '__main__':
         'reason': 'text null',
         'logdate': 'date not null',
         'logtime': 'time not null',
-        'source': 'binary(4) not null',
+        'source': 'nvarchar(max) not null',
+        'message': 'text null'
     }
 
     # Create the table
